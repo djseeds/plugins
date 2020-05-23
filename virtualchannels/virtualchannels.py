@@ -16,9 +16,12 @@ plugin = Plugin()
 def init(options, configuration, plugin):
     plugin.log("Plugin helloworld.py initialized")
 
-
+@plugin.method("test")
+def send_message(plugin: Plugin, name="test"):
+  pass
+  
 @plugin.hook("htlc_accepted")
-def on_htlc_connected(plugin, onion, next_onion, shared_secret, htlc):
+def on_htlc_connected(plugin, onion, next_onion, shared_secret, htlc, **kwargs):
   """ Main method for receiving on behalf of trusted node.
   """
   plugin.log("Got an incoming HTLC htlc={}, onion={}".format(htlc, onion))
@@ -26,16 +29,17 @@ def on_htlc_connected(plugin, onion, next_onion, shared_secret, htlc):
 
 
 @plugin.hook("rpc_command")
-def on_rpc_command(plugin, rpc_command):
+def on_rpc_command(plugin, rpc_command, **kwargs):
   """ Routes RPC commands to handlers or allows clightning to continue.
   """
-  plugin.log("Got an incoming RPC command method={}".format(rpc_command.method))
+  method = rpc_command["method"]
+  plugin.log("Got an incoming RPC command method={}".format(method))
   handlers = {
     'sendpay': on_sendpay,
     'invoice': on_invoice,
   }
 
-  handler = handlers.get(rpc_command.method, lambda: {"result": "continue"})
+  handler = handlers.get(method, lambda a, b: {"result": "continue"})
   return handler(plugin, rpc_command)
 
 
