@@ -13,18 +13,18 @@ class MessageType(Enum):
 plugin = Plugin()
 
 @plugin.init()
-def init(options, configuration, plugin):
-    plugin.log("Plugin helloworld.py initialized")
+def init(options, configuration, plugin: Plugin):
+  trusted = plugin.get_option("trust_node")
+  pass
 
 @plugin.method("test")
 def send_message(plugin: Plugin, name="test"):
   pass
   
 @plugin.hook("htlc_accepted")
-def on_htlc_connected(plugin, onion, next_onion, shared_secret, htlc, **kwargs):
+def on_htlc_accepted(plugin, **kwargs):
   """ Main method for receiving on behalf of trusted node.
   """
-  plugin.log("Got an incoming HTLC htlc={}, onion={}".format(htlc, onion))
   return {"result": "continue"}
 
 
@@ -35,7 +35,7 @@ def on_rpc_command(plugin, rpc_command, **kwargs):
   method = rpc_command["method"]
   plugin.log("Got an incoming RPC command method={}".format(method))
   handlers = {
-    'sendpay': on_sendpay,
+    'pay': on_pay,
     'invoice': on_invoice,
   }
 
@@ -43,7 +43,8 @@ def on_rpc_command(plugin, rpc_command, **kwargs):
   return handler(plugin, rpc_command)
 
 
-def on_sendpay(plugin, rpc_command):
+def on_pay(plugin, rpc_command):
+  # Send invoice to trusted nodes, aggregate the result.
   return {"result": "continue"}
 
 
@@ -51,7 +52,7 @@ def on_invoice(plugin, rpc_command):
   return {"result": "continue"}
 
 @plugin.hook("custommsg")
-def on_custommsg(plugin, peer_id, message):
+def on_custommsg(plugin, peer_id, message, **kwargs):
   # Split message into type and contents
   # Dispatch to handler if one exists
   (type, value) = parse_message(message)
@@ -105,5 +106,5 @@ def on_fail_virtual_send(message):
   """
   pass
 
-plugin.add_option('greeting', 'Hello', 'The greeting I should use.')
+plugin.add_option('trust_node', None, "Fully trust a lightning node, creating an infinite-balance bidirectional virtual channel.")
 plugin.run()

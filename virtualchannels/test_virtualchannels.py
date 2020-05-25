@@ -1,14 +1,73 @@
 from pyln.testing.fixtures import *
 from pyln.client import RpcError
+from pyln.testing.utils import wait_for
+from time import sleep
+import unittest
 
 pluginopts = {'plugin': os.path.join(os.path.dirname(__file__), "virtualchannels.py")}
 
-def test_summary_start(node_factory: NodeFactory):
-    #assert(True)
-    l1: LightningNode = node_factory.get_node(options=pluginopts)
-    l2: LightningNode = node_factory.get_node(options=pluginopts)
-    msg = r'ff' * 32
-    node_id = '02df5ffe895c778e10f7742a6c5b8a0cefbe9465df58b92fadeb883752c8107c8f'
-    with pytest.raises(RpcError, match=r'No such peer'):
-        l1.rpc.dev_sendcustommsg(node_id, msg)
-    #assert(s['network'] == 'REGTEST')  # or whatever you want to test
+@unittest.skipIf(not DEVELOPER, "gossip is too slow if we're not in developer mode")
+def test_concrete_send(node_factory: NodeFactory):
+    """ Ensure concrete send still works with plugin activated
+    """
+    id1 = node_factory.get_node_id()
+    id2 = node_factory.get_node_id()
+    l1: LightningNode = node_factory.get_node(options={**pluginopts, **{'trust_node': id2}})
+    l2: LightningNode = node_factory.get_node(options=pluginopts, **{'trust_node': id1})
+    l3: LightningNode = node_factory.get_node(options=pluginopts)
+
+    l1.connect(l3)
+    l1.openchannel(l3, 1_000_000)
+    # l1 should be able to pay l3 directly
+    invoice = l3.rpc.invoice(9000000, "test", "test")
+    sleep(1)
+    l1.rpc.pay(invoice["bolt11"])
+    #l1.pay(l3, 100000)
+
+@unittest.skipIf(not DEVELOPER, "gossip is too slow if we're not in developer mode")
+def test_virtual_send(node_factory: NodeFactory):
+    id1 = node_factory.get_node_id()
+    id2 = node_factory.get_node_id()
+    l1: LightningNode = node_factory.get_node(options={**pluginopts, **{'trust_node': id2}})
+    l2: LightningNode = node_factory.get_node(options=pluginopts, **{'trust_node': id1})
+    l3: LightningNode = node_factory.get_node(options=pluginopts)
+
+    l1.connect(l3)
+    l1.fund_channel(l3, 1_000_000)
+    # l2 should be able to send to l3 through l1
+    invoice = l3.rpc.invoice(100000, "test", "Test Invoice")
+    l2.rpc.pay(invoice["bolt11"])
+
+@unittest.skipIf(not DEVELOPER, "gossip is too slow if we're not in developer mode")
+def test_concrete_receive(node_factory: NodeFactory):
+    """ Ensure concrete receive still works with plugin activated
+    """
+    id1 = node_factory.get_node_id()
+    id2 = node_factory.get_node_id()
+    l1: LightningNode = node_factory.get_node(options={**pluginopts, **{'trust_node': id2}})
+    l2: LightningNode = node_factory.get_node(options=pluginopts, **{'trust_node': id1})
+    l3: LightningNode = node_factory.get_node(options=pluginopts)
+
+    l3.connect(l1)
+    l3.fund_channel(l1, 1_000_000)
+    # l3 should be able to pay l3 directly
+    invoice = l1.rpc.invoice(100000, "test", "Test Invoice")
+    print(len(l3.rpc.listchannels()['channels']))
+    print(len(l1.rpc.listchannels()['channels']))
+    sleep(10)
+    l3.pay(l1, 100000)
+    #l3.rpc.pay(invoice["bolt11"])
+
+@unittest.skipIf(not DEVELOPER, "gossip is too slow if we're not in developer mode")
+def test_virtual_receive(node_factory: NodeFactory):
+    id1 = node_factory.get_node_id()
+    id2 = node_factory.get_node_id()
+    l1: LightningNode = node_factory.get_node(options={**pluginopts, **{'trust_node': id2}})
+    l2: LightningNode = node_factory.get_node(options=pluginopts, **{'trust_node': id1})
+    l3: LightningNode = node_factory.get_node(options=pluginopts)
+
+    l3.connect(l1)
+    l3.fund_channel(l1, 1_000_000)
+    # l3 should be able to pay l2 through l1
+    invoice = l2.rpc.invoice(100000, "test", "Test Invoice")
+    l3.rpc.pay(invoice["bolt11"])
