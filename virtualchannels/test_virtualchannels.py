@@ -6,7 +6,6 @@ import unittest
 
 pluginopts = {'plugin': os.path.join(os.path.dirname(__file__), "virtualchannels.py")}
 
-@unittest.skipIf(not DEVELOPER, "gossip is too slow if we're not in developer mode")
 def test_concrete_send(node_factory: NodeFactory):
     """ Ensure concrete send still works with plugin activated
     """
@@ -24,7 +23,6 @@ def test_concrete_send(node_factory: NodeFactory):
     l1.rpc.pay(invoice["bolt11"])
     #l1.pay(l3, 100000)
 
-@unittest.skipIf(not DEVELOPER, "gossip is too slow if we're not in developer mode")
 def test_virtual_send(node_factory: NodeFactory):
     id1 = node_factory.get_node_id()
     id2 = node_factory.get_node_id()
@@ -38,7 +36,6 @@ def test_virtual_send(node_factory: NodeFactory):
     invoice = l3.rpc.invoice(100000, "test", "Test Invoice")
     l2.rpc.pay(invoice["bolt11"])
 
-@unittest.skipIf(not DEVELOPER, "gossip is too slow if we're not in developer mode")
 def test_concrete_receive(node_factory: NodeFactory):
     """ Ensure concrete receive still works with plugin activated
     """
@@ -58,7 +55,6 @@ def test_concrete_receive(node_factory: NodeFactory):
     l3.pay(l1, 100000)
     #l3.rpc.pay(invoice["bolt11"])
 
-@unittest.skipIf(not DEVELOPER, "gossip is too slow if we're not in developer mode")
 def test_virtual_receive(node_factory: NodeFactory):
     id1 = node_factory.get_node_id()
     id2 = node_factory.get_node_id()
