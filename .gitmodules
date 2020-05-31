@@ -13,3 +13,6 @@
 [submodule "csvexportpays"]
 	path = csvexportpays
 	url = https://github.com/0xB10C/c-lightning-plugin-csvexportpays.git
+[submodule "virtualchannels/lib/lightning_payencode"]
+	path = virtualchannels/lib/lightning_payencode
+	url = https://github.com/rustyrussell/lightning-payencode
