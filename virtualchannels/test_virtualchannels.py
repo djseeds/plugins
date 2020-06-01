@@ -6,13 +6,39 @@ import unittest
 
 pluginopts = {'plugin': os.path.join(os.path.dirname(__file__), "virtualchannels.py")}
 
+def test_vcinvoice(node_factory: NodeFactory):
+    id1 = node_factory.get_node_id()
+    id2 = node_factory.get_node_id()
+    l1: LightningNode = node_factory.get_node(id1, options={**pluginopts, **{'trust_node': id2}})
+    l2: LightningNode = node_factory.get_node(id2, options=pluginopts, **{'trust_node': id1})
+    l3: LightningNode = node_factory.get_node(options=pluginopts)
+
+    l1.connect(l3)
+    l3.openchannel(l1, 1_000_000)
+
+    payload = {
+        "msatoshi": 9000000,
+        "label": "test",
+        "description": "test",
+    }
+
+    res = l1.rpc.call("vcinvoice", payload)
+    invoice_details = l1.rpc.decodepay(res["bolt11"])
+    info = l1.rpc.getinfo()
+    assert(invoice_details["payee"] == info["id"])
+    
+    #sleep(1)
+    #l3.rpc.pay(res["invoice"])
+
+
+
 def test_concrete_send(node_factory: NodeFactory):
     """ Ensure concrete send still works with plugin activated
     """
     id1 = node_factory.get_node_id()
     id2 = node_factory.get_node_id()
-    l1: LightningNode = node_factory.get_node(options={**pluginopts, **{'trust_node': id2}})
-    l2: LightningNode = node_factory.get_node(options=pluginopts, **{'trust_node': id1})
+    l1: LightningNode = node_factory.get_node(id1, options={**pluginopts, **{'trust_node': id2}})
+    l2: LightningNode = node_factory.get_node(id2, options=pluginopts, **{'trust_node': id1})
     l3: LightningNode = node_factory.get_node(options=pluginopts)
 
     l1.connect(l3)
@@ -26,8 +52,8 @@ def test_concrete_send(node_factory: NodeFactory):
 def test_virtual_send(node_factory: NodeFactory):
     id1 = node_factory.get_node_id()
     id2 = node_factory.get_node_id()
-    l1: LightningNode = node_factory.get_node(options={**pluginopts, **{'trust_node': id2}})
-    l2: LightningNode = node_factory.get_node(options=pluginopts, **{'trust_node': id1})
+    l1: LightningNode = node_factory.get_node(id1, options={**pluginopts, **{'trust_node': id2}})
+    l2: LightningNode = node_factory.get_node(id2, options=pluginopts, **{'trust_node': id1})
     l3: LightningNode = node_factory.get_node(options=pluginopts)
 
     l1.connect(l3)
@@ -41,8 +67,8 @@ def test_concrete_receive(node_factory: NodeFactory):
     """
     id1 = node_factory.get_node_id()
     id2 = node_factory.get_node_id()
-    l1: LightningNode = node_factory.get_node(options={**pluginopts, **{'trust_node': id2}})
-    l2: LightningNode = node_factory.get_node(options=pluginopts, **{'trust_node': id1})
+    l1: LightningNode = node_factory.get_node(id1, options={**pluginopts, **{'trust_node': id2}})
+    l2: LightningNode = node_factory.get_node(id2, options=pluginopts, **{'trust_node': id1})
     l3: LightningNode = node_factory.get_node(options=pluginopts)
 
     l3.connect(l1)
@@ -58,8 +84,8 @@ def test_concrete_receive(node_factory: NodeFactory):
 def test_virtual_receive(node_factory: NodeFactory):
     id1 = node_factory.get_node_id()
     id2 = node_factory.get_node_id()
-    l1: LightningNode = node_factory.get_node(options={**pluginopts, **{'trust_node': id2}})
-    l2: LightningNode = node_factory.get_node(options=pluginopts, **{'trust_node': id1})
+    l1: LightningNode = node_factory.get_node(id1, options={**pluginopts, **{'trust_node': id2}})
+    l2: LightningNode = node_factory.get_node(id2, options=pluginopts, **{'trust_node': id1})
     l3: LightningNode = node_factory.get_node(options=pluginopts)
 
     l3.connect(l1)

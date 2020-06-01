@@ -38,26 +38,26 @@ def on_htlc_accepted(plugin: Plugin, **kwargs):
   return {"result": "continue"}
 
 
-@plugin.hook("rpc_command")
-def on_rpc_command(plugin: Plugin, rpc_command, **kwargs):
-  """ Routes RPC commands to handlers or allows clightning to continue.
-  """
-  method = rpc_command["method"]
-  plugin.log("Got an incoming RPC command method={}".format(method))
-  handlers = {
-    'pay': on_pay,
-    'invoice': on_invoice,
-  }
-
-  handler = handlers.get(method, lambda a, **kwargs: {"result": "continue"})
-  return handler(plugin, **(rpc_command["params"]))
-
+#@plugin.hook("rpc_command")
+#def on_rpc_command(plugin: Plugin, rpc_command, **kwargs):
+#  """ Routes RPC commands to handlers or allows clightning to continue.
+#  """
+#  method = rpc_command["method"]
+#  plugin.log("Got an incoming RPC command method={}".format(method))
+#  handlers = {
+#    'pay': on_pay,
+#    'invoice': on_invoice,
+#  }
+#
+#  handler = handlers.get(method, lambda a, **kwargs: {"result": "continue"})
+#  return handler(plugin, **(rpc_command["params"]))
 
 def on_pay(plugin: Plugin, **kwargs):
   # Send invoice to trusted nodes, aggregate the result.
   return {"result": "continue"}
 
 
+@plugin.method("vcinvoice")
 def on_invoice(plugin: Plugin, msatoshi, label, description, expiry=None, fallbacks=None, preimage=None, exposeprivatechannels=None):
   def generate_preimage():
     return ''.join([SystemRandom().choice(hexdigits) for _ in range(64)])
@@ -113,25 +113,25 @@ def on_invoice(plugin: Plugin, msatoshi, label, description, expiry=None, fallba
 
   def sign_invoice(plugin: Plugin, hrp: str, data: BitArray):
     message = (bytearray([ord(c) for c in hrp]) + data.tobytes()).hex()
-    raise ValueError(message)
     res = plugin.rpc.signmessage(message)
-    raise ValueError(res)
-    return sig, recoveryId
+    return res["signature"], res["recid"]
     
   tags = []
   # Add description field
   tags.append(('d', description))
 
+  # Add pubkey
+  info = plugin.rpc.getinfo()
+  tags.append(('n', bytearray.fromhex(info["id"])))
+
 
   # Get invoice
-  addr = LnAddr(sha256(bytearray.fromhex(preimage)).digest(), amount, tags=tags)
+  addr = LnAddr(sha256(bytearray.fromhex(preimage)).digest(), amount, currency='bcrt', tags=tags)
   hrp, data = lnencode_unsigned(addr)
   sig, recid = sign_invoice(plugin, hrp, data)
-  data += bytes(sig) + bytes([recid])
+  data += bytes.fromhex(sig) + bytes.fromhex(recid)
   invoice = bech32_encode(hrp, bitarray_to_u5(data))
-
-
-  return {"result": "continue"}
+  return {"bolt11": invoice}
 
 
 
