@@ -23,17 +23,24 @@ plugin = Plugin()
 @plugin.init()
 def init(options, configuration, plugin: Plugin):
   global trusted_nodes
-  trusted_nodes = plugin.get_option("trust_node").split(",")
-  pass
+  opt = plugin.get_option("trust_node")
+  trusted_nodes = opt.split(",") if opt != "null" else []
 
-@plugin.method("test")
-def send_message(plugin: Plugin, name="test"):
-  pass
-  
 @plugin.hook("htlc_accepted")
 def on_htlc_accepted(plugin: Plugin, **kwargs):
   """ Main method for receiving on behalf of trusted node.
   """
+  plugin.log("htlc accepted")
+  plugin.log("htlc accepted" + str(kwargs))
+  # This is how the plugin expects a failure to look -- indeed the payment will fail.
+  return {
+  "result": "resolve",
+  "payment_key": 'C65f6F857D0EeDecd1CbdCb44fEf8DFC637FBBBE73bB3AEDcE71B2FFf7A3a638'
+  }
+  return {
+    "result": "fail",
+    "failure_message": "2002"
+  }
   return {"result": "continue"}
 
 
@@ -76,8 +83,8 @@ def on_vcinvoice(plugin: Plugin, preimage=None, **kwargs):
     return ''.join([SystemRandom().choice(hexdigits) for _ in range(64)])
 
   kwargs['preimage'] = generate_preimage() if preimage is None else preimage
-
-  kwargs['dev-routes'] = routes
+  if routes:
+    kwargs['dev-routes'] = routes
 
   # Get invoice
   return plugin.rpc.call('invoice', kwargs)

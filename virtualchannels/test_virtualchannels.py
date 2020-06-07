@@ -9,7 +9,7 @@ pluginopts = {'plugin': os.path.join(os.path.dirname(__file__), "virtualchannels
 def test_vcinvoice(node_factory: NodeFactory):
     id1 = node_factory.get_node_id()
     id2 = node_factory.get_node_id()
-    l2: LightningNode = node_factory.get_node(id2, options=pluginopts, **{'trust_node': id1})
+    l2: LightningNode = node_factory.get_node(id2, options=pluginopts)
     id2 = l2.rpc.getinfo()["id"]
     l1: LightningNode = node_factory.get_node(id1, options={**pluginopts, **{'trust_node': id2}})
     l3: LightningNode = node_factory.get_node(options=pluginopts)
@@ -23,7 +23,7 @@ def test_vcinvoice(node_factory: NodeFactory):
         "description": "test",
     }
 
-
+    # l1 should create a valid invoice with a routing hint pointing to l2
     res = l1.rpc.call("vcinvoice", payload)
     invoice_details = l1.rpc.decodepay(res["bolt11"])
     info = l1.rpc.getinfo()
@@ -31,6 +31,12 @@ def test_vcinvoice(node_factory: NodeFactory):
     assert(len(invoice_details["routes"]) == 1)
     assert(len(invoice_details["routes"][0]) == 1)
     assert(invoice_details["routes"][0][0]["pubkey"] == id2)
+
+    # l2 should create a valid invoice with no routing hints
+    res = l2.rpc.call("vcinvoice", payload)
+    invoice_details = l2.rpc.decodepay(res["bolt11"])
+    assert(invoice_details["payee"] == id2)
+    assert(invoice_details.get("routes", None) is None)
     
 
 def test_concrete_send(node_factory: NodeFactory):
@@ -39,7 +45,7 @@ def test_concrete_send(node_factory: NodeFactory):
     id1 = node_factory.get_node_id()
     id2 = node_factory.get_node_id()
     l1: LightningNode = node_factory.get_node(id1, options={**pluginopts, **{'trust_node': id2}})
-    l2: LightningNode = node_factory.get_node(id2, options=pluginopts, **{'trust_node': id1})
+    l2: LightningNode = node_factory.get_node(options={**pluginopts, **{'trust_node': id1}})
     l3: LightningNode = node_factory.get_node(options=pluginopts)
 
     l1.connect(l3)
@@ -54,7 +60,7 @@ def test_virtual_send(node_factory: NodeFactory):
     id1 = node_factory.get_node_id()
     id2 = node_factory.get_node_id()
     l1: LightningNode = node_factory.get_node(id1, options={**pluginopts, **{'trust_node': id2}})
-    l2: LightningNode = node_factory.get_node(id2, options=pluginopts, **{'trust_node': id1})
+    l2: LightningNode = node_factory.get_node(options={**pluginopts, **{'trust_node': id1}})
     l3: LightningNode = node_factory.get_node(options=pluginopts)
 
     l1.connect(l3)
@@ -69,7 +75,7 @@ def test_concrete_receive(node_factory: NodeFactory):
     id1 = node_factory.get_node_id()
     id2 = node_factory.get_node_id()
     l1: LightningNode = node_factory.get_node(id1, options={**pluginopts, **{'trust_node': id2}})
-    l2: LightningNode = node_factory.get_node(id2, options=pluginopts, **{'trust_node': id1})
+    l2: LightningNode = node_factory.get_node(options={**pluginopts, **{'trust_node': id1}})
     l3: LightningNode = node_factory.get_node(options=pluginopts)
 
     l3.connect(l1)
@@ -85,12 +91,23 @@ def test_concrete_receive(node_factory: NodeFactory):
 def test_virtual_receive(node_factory: NodeFactory):
     id1 = node_factory.get_node_id()
     id2 = node_factory.get_node_id()
-    l1: LightningNode = node_factory.get_node(id1, options={**pluginopts, **{'trust_node': id2}})
-    l2: LightningNode = node_factory.get_node(id2, options=pluginopts, **{'trust_node': id1})
+    l1: LightningNode = node_factory.get_node(options={**pluginopts, **{'trust_node': id2}})
+    id1 = l1.rpc.getinfo()["id"]
+    l2: LightningNode = node_factory.get_node(options={**pluginopts, **{'trust_node': id1}})
     l3: LightningNode = node_factory.get_node(options=pluginopts)
 
     l3.connect(l1)
     l3.fund_channel(l1, 1_000_000)
+    amt = 9000000
+    payload = {
+        "msatoshi": amt,
+        "label": "test",
+        "description": "test",
+        "preimage": "C65f6F857D0EeDecd1CbdCb44fEf8DFC637FBBBE73bB3AEDcE71B2FFf7A3a638"
+    }
+    invoice = l2.rpc.call('vcinvoice', payload)
     # l3 should be able to pay l2 through l1
-    invoice = l2.rpc.invoice(100000, "test", "Test Invoice")
     l3.rpc.pay(invoice["bolt11"])
+
+    # Payment has already succeeded from l3's point of view. Ensure l1 actually got the money.
+    wait_for(lambda : int(l1.rpc.listfunds()['channels'][0]['our_amount_msat']) == amt)
