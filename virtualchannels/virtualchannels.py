@@ -4,8 +4,6 @@ from string import hexdigits
 from enum import Enum
 import re
 from pyln.client import Plugin
-from lnaddr import  LnAddr, lnencode_unsigned, bitarray_to_u5
-from bech32 import bech32_encode
 from hashlib import sha256
 from bitstring import BitArray
 
@@ -24,7 +22,8 @@ plugin = Plugin()
 
 @plugin.init()
 def init(options, configuration, plugin: Plugin):
-  trusted_nodes = plugin.get_option("trust_node")
+  global trusted_nodes
+  trusted_nodes = plugin.get_option("trust_node").split(",")
   pass
 
 @plugin.method("test")
@@ -58,81 +57,30 @@ def on_pay(plugin: Plugin, **kwargs):
 
 
 @plugin.method("vcinvoice")
-def on_invoice(plugin: Plugin, msatoshi, label, description, expiry=None, fallbacks=None, preimage=None, exposeprivatechannels=None):
+def on_vcinvoice(plugin: Plugin, preimage=None, **kwargs):
+  routes = [[{
+    "id": node,
+    # short_channel_id ... is constructed as follows:
+    # 1. the most significant 3 bytes: indicating the block height
+    # 2. the next 3 bytes: indicating the transaction index within the block
+    # 3. the least significant 2 bytes: indicating the output index that pays to the channel.
+
+    # For now this will not be used, as we'll just be checking the preimage hash directly.
+    "short_channel_id": "000000" + "x" + "000000" + "x" + "0000",
+    "fee_base_msat": 0,
+    "fee_proportional_millionths": 0,
+    "cltv_expiry_delta": 0,
+  }] for node in trusted_nodes]
+
   def generate_preimage():
     return ''.join([SystemRandom().choice(hexdigits) for _ in range(64)])
 
-  if preimage is None:
-    preimage = generate_preimage()
-  elif len(preimage) != 64 and all(c in hexdigits for c in preimage):
-    # Preimage is a 64-digit hex string
-    raise ValueError("Bad Preimage")
+  kwargs['preimage'] = generate_preimage() if preimage is None else preimage
 
-  # TODO: The msatoshi parameter can be the string "any", which creates an invoice that can be paid with any amount
-  def parse_msatoshi(msatoshi: str):
-    """ Parse msatoshi field in invoice.
-    The msatoshi parameter can be the string “any”, which creates an invoice that can be paid with any amount.
-    Otherwise it is in millisatoshi precision;
-    it can be
-    - a whole number
-    - or a whole number ending in msat or sat,
-    - or a number with three decimal places ending in sat
-    - or a number with 1 to 11 decimal places ending in btc.
-    """
-    if msatoshi == "Any":
-      raise NotImplementedError("Still not sure how to handle the Any case")
-    if msatoshi.isdigit():
-      return int(msatoshi)
-    elif msatoshi.endswith("msat"):
-      msat = msatoshi[:-4]
-      if msat.isdigit:
-        return int(msat)
-      else:
-        raise ValueError("msatoshi ends in msat but is not a whole number.")
-    elif msatoshi.endswith("sat"):
-      sat = msatoshi[:-3]
-      if sat.isdigit():
-        return int(msat) * 1000
-      elif re.match(r"\d+\.\d{3}$", sat):
-        return int(float(msat) * 1000)
-      else:
-        raise ValueError("msatoshi ends in sat but is not a whole number or a number with three decimal places.")
-    elif msatoshi.endswith("btc"):
-      btc = msatoshi[:-3]
-      if re.match(r"\d+\.\d{1,11}$", btc):
-        return int(float(btc) * 100_000_000_000)
-      else:
-        raise ValueError("msatoshi ends in btc but is not a number with 1 to 11 decimal places")
-    else:
-      raise NotImplementedError("Parsing not implemented yet")
-
-  #amount = parse_msatoshi(msatoshi)
-  amount = msatoshi
-
-  # TODO: Store preimage
-
-  def sign_invoice(plugin: Plugin, hrp: str, data: BitArray):
-    message = (bytearray([ord(c) for c in hrp]) + data.tobytes()).hex()
-    res = plugin.rpc.signmessage(message)
-    return res["signature"], res["recid"]
-    
-  tags = []
-  # Add description field
-  tags.append(('d', description))
-
-  # Add pubkey
-  info = plugin.rpc.getinfo()
-  tags.append(('n', bytearray.fromhex(info["id"])))
-
+  kwargs['dev-routes'] = routes
 
   # Get invoice
-  addr = LnAddr(sha256(bytearray.fromhex(preimage)).digest(), amount, currency='bcrt', tags=tags)
-  hrp, data = lnencode_unsigned(addr)
-  sig, recid = sign_invoice(plugin, hrp, data)
-  data += bytes.fromhex(sig) + bytes.fromhex(recid)
-  invoice = bech32_encode(hrp, bitarray_to_u5(data))
-  return {"bolt11": invoice}
-
+  return plugin.rpc.call('invoice', kwargs)
 
 
 @plugin.hook("custommsg")

@@ -9,8 +9,9 @@ pluginopts = {'plugin': os.path.join(os.path.dirname(__file__), "virtualchannels
 def test_vcinvoice(node_factory: NodeFactory):
     id1 = node_factory.get_node_id()
     id2 = node_factory.get_node_id()
-    l1: LightningNode = node_factory.get_node(id1, options={**pluginopts, **{'trust_node': id2}})
     l2: LightningNode = node_factory.get_node(id2, options=pluginopts, **{'trust_node': id1})
+    id2 = l2.rpc.getinfo()["id"]
+    l1: LightningNode = node_factory.get_node(id1, options={**pluginopts, **{'trust_node': id2}})
     l3: LightningNode = node_factory.get_node(options=pluginopts)
 
     l1.connect(l3)
@@ -22,15 +23,15 @@ def test_vcinvoice(node_factory: NodeFactory):
         "description": "test",
     }
 
+
     res = l1.rpc.call("vcinvoice", payload)
     invoice_details = l1.rpc.decodepay(res["bolt11"])
     info = l1.rpc.getinfo()
     assert(invoice_details["payee"] == info["id"])
+    assert(len(invoice_details["routes"]) == 1)
+    assert(len(invoice_details["routes"][0]) == 1)
+    assert(invoice_details["routes"][0][0]["pubkey"] == id2)
     
-    #sleep(1)
-    #l3.rpc.pay(res["invoice"])
-
-
 
 def test_concrete_send(node_factory: NodeFactory):
     """ Ensure concrete send still works with plugin activated
