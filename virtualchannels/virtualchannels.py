@@ -1,22 +1,12 @@
 #!/usr/bin/env python3
 from random import SystemRandom
 from string import hexdigits
-from enum import Enum
-import re
 from pyln.client import Plugin
+import messages
 from hashlib import sha256
-from bitstring import BitArray
 
 trusted_nodes = []
-invoices = dict()
-
-class MessageType(Enum):
-  PROPOSE_VIRTUAL_RECEIVE= 0xFFA9
-  ACCEPT_VIRTUAL_RECEIVE= 0xFFAB
-  FAIL_VIRTUAL_RECEIVE= 0xFFAD
-  PROPOSE_VIRTUAL_SEND= 0xFFAF
-  VIRTUAL_SEND_COMPLETE= 0xFFB1
-  FAIL_VIRTUAL_SEND= 0xFFB3
+preimages = dict()
 
 plugin = Plugin()
 
@@ -27,21 +17,20 @@ def init(options, configuration, plugin: Plugin):
   trusted_nodes = opt.split(",") if opt != "null" else []
 
 @plugin.hook("htlc_accepted")
-def on_htlc_accepted(plugin: Plugin, **kwargs):
+def on_htlc_accepted(plugin: Plugin, htlc, **kwargs):
   """ Main method for receiving on behalf of trusted node.
   """
-  plugin.log("htlc accepted")
-  plugin.log("htlc accepted" + str(kwargs))
-  # This is how the plugin expects a failure to look -- indeed the payment will fail.
-  return {
-  "result": "resolve",
-  "payment_key": 'C65f6F857D0EeDecd1CbdCb44fEf8DFC637FBBBE73bB3AEDcE71B2FFf7A3a638'
-  }
-  return {
-    "result": "fail",
-    "failure_message": "2002"
-  }
-  return {"result": "continue"}
+
+  # TODO: Need to receive an ack from source before sending response to support type 2 channels (finite capacity)
+  if htlc["payment_hash"] in preimages:
+    plugin.log("We have this preimage!: " + preimages[htlc["payment_hash"]])
+    return {
+      "result": "resolve",
+      "payment_key": preimages[htlc['payment_hash']]
+    }
+  else:
+    plugin.log("We don't have preimage for hash: " + htlc["payment_hash"] + " preimages: " + str(preimages))
+    return {"result": "continue"}
 
 
 #@plugin.hook("rpc_command")
@@ -79,71 +68,75 @@ def on_vcinvoice(plugin: Plugin, preimage=None, **kwargs):
     "cltv_expiry_delta": 0,
   }] for node in trusted_nodes]
 
-  def generate_preimage():
+  def generate_preimage() -> str:
     return ''.join([SystemRandom().choice(hexdigits) for _ in range(64)])
 
   kwargs['preimage'] = generate_preimage() if preimage is None else preimage
   if routes:
     kwargs['dev-routes'] = routes
 
-  # Get invoice
-  return plugin.rpc.call('invoice', kwargs)
+  invoice = plugin.rpc.call('invoice', kwargs)
 
+  msg = messages.InitVirtualReceive(kwargs['preimage'])
+  # Notify trusted nodes of new invoice
+  plugin.log("custommsg " + msg.to_hex())
+  for node in trusted_nodes:
+    plugin.rpc.call("dev-sendcustommsg", {
+      "node_id": node,
+      "msg": msg.to_hex()
+    })
+
+  return invoice
 
 @plugin.hook("custommsg")
 def on_custommsg(plugin: Plugin, peer_id, message, **kwargs):
-  # Split message into type and contents
-  # Dispatch to handler if one exists
-  (type, value) = parse_message(message)
-  handlers = {
-    MessageType.PROPOSE_VIRTUAL_RECEIVE: on_propose_virtual_receive,
-    MessageType.ACCEPT_VIRTUAL_RECEIVE: on_accept_virtual_receive,
-    MessageType.FAIL_VIRTUAL_RECEIVE: on_fail_virtual_receive,
-    MessageType.PROPOSE_VIRTUAL_SEND: on_propose_virtual_send,
-    MessageType.VIRTUAL_SEND_COMPLETE: on_virtual_send_complete,
-    MessageType.FAIL_VIRTUAL_SEND: on_fail_virtual_send,
+  # TODO: Understand what the first 4 bytes mean. Doesn't seem to be length?
+  # e.g. here: https://github.com/ElementsProject/lightning/blob/ce9e559aed5c491f09b570545aabedb2a2c64402/tests/test_misc.py#L2237
+  msg = messages.Message.from_hex(message[8:])
+
+  plugin.log("custommsg " + message)
+
+  handler = message_handlers.get(msg.__class__, lambda *args, **kwargs: {"result": "continue"})
+  return handler(plugin, peer_id, msg)
+
+@plugin.method("openvirtualchannel")
+def on_openvirtualchannel(plugin: Plugin, id):
+  if plugin.rpc.getpeer(id) is None:
+    return {
+      "error": {
+        "message": "Failed to find peer with id {id}".format(id=id)
+      }
+    }
+  # Only allow 1 virtual channel per peer
+  if id in trusted_nodes:
+    return {
+      "error": {
+        "message": "Multiple virtual channels to the same peer are not supported"
+      }
+    }
+  # Create a virtual channel with a new short channel ID
+  trusted_nodes.append(id)
+
+  # TODO: Decide how to generate short channel IDs for these channels
+  return {
+    "result": {
+      "short_channel_id": "0x0x0",
+    }
   }
 
-  handler = handlers.get(type, lambda: None)
-  handler(value)
-  return {"result": "continue"}
+  
 
-def parse_message(message):
-  try:
-    type = int(message[0:4], 16)
-    return (type, message[4:])
-  except ValueError:
-    return (None, None)
-
-def on_propose_virtual_receive(message):
+def on_init_virtual_receive(plugin: Plugin, peer_id, message: messages.InitVirtualReceive):
   """ Contents: payment_hash amount
   """
-  pass
+  h = sha256(bytes.fromhex(message.preimage)).hexdigest()
+  preimages[h] = message.preimage
+  return {"result": "continue"}
 
-def on_accept_virtual_receive(message):
-  """ Contents: preimage
-  """
-  pass
 
-def on_fail_virtual_receive(message):
-  """ Contents: reason?
-  """
-  pass
-
-def on_propose_virtual_send(message):
-  """ Contents: route payment_hash [label] [msatoshi] [bolt11] [partid]
-  """
-  pass
-
-def on_virtual_send_complete(message):
-  """ Contents: payment_preimage
-  """
-  pass
-
-def on_fail_virtual_send(message):
-  """ Contents: reason?
-  """
-  pass
+message_handlers = {
+  messages.InitVirtualReceive: on_init_virtual_receive,
+}
 
 plugin.add_option('trust_node', None, "Fully trust a lightning node, creating an infinite-balance bidirectional virtual channel.")
 plugin.run()

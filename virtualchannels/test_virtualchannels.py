@@ -103,8 +103,9 @@ def test_virtual_receive(node_factory: NodeFactory):
         "msatoshi": amt,
         "label": "test",
         "description": "test",
-        "preimage": "C65f6F857D0EeDecd1CbdCb44fEf8DFC637FBBBE73bB3AEDcE71B2FFf7A3a638"
     }
+    # TODO: connect when opening virtual channel
+    l2.connect(l1)
     invoice = l2.rpc.call('vcinvoice', payload)
     # l3 should be able to pay l2 through l1
     l3.rpc.pay(invoice["bolt11"])
