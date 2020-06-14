@@ -101,6 +101,9 @@ def on_custommsg(plugin: Plugin, peer_id, message, **kwargs):
 
 @plugin.method("openvirtualchannel")
 def on_openvirtualchannel(plugin: Plugin, id):
+  """ Open an infinite-capacity private virtual channel with `id`.
+  Note: this fully trusts `id` to receive and send payments on your behalf.
+  """
   if plugin.rpc.getpeer(id) is None:
     return {
       "error": {
@@ -123,11 +126,10 @@ def on_openvirtualchannel(plugin: Plugin, id):
       "short_channel_id": "0x0x0",
     }
   }
-
   
 
 def on_init_virtual_receive(plugin: Plugin, peer_id, message: messages.InitVirtualReceive):
-  """ Contents: payment_hash amount
+  """ Contents: preimage bolt11
   """
   h = sha256(bytes.fromhex(message.preimage)).hexdigest()
   preimages[h] = message.preimage
@@ -138,5 +140,4 @@ message_handlers = {
   messages.InitVirtualReceive: on_init_virtual_receive,
 }
 
-plugin.add_option('trust_node', None, "Fully trust a lightning node, creating an infinite-balance bidirectional virtual channel.")
 plugin.run()
