@@ -2,7 +2,9 @@ from pyln.testing.fixtures import *
 from pyln.client import RpcError
 from pyln.testing.utils import wait_for
 from time import sleep
+import json
 import unittest
+
 
 pluginopts = {'plugin': os.path.join(os.path.dirname(__file__), "virtualchannels.py")}
 
@@ -10,7 +12,7 @@ def open_virtual_channel(src: LightningNode, dst: LightningNode):
     src.rpc.call("openvirtualchannel", {"id": dst.info["id"]})
 
 def test_vcinvoice(node_factory: NodeFactory):
-    l1, l2, l3 = node_factory.get_nodes(3, pluginopts)
+    l1, l2, l3 = node_factory.get_nodes(3, pluginopts) # type: LightningNode, LightningNode, LightningNode
 
     # Open virtual channel from l1 to l2.
     l1.connect(l2)
@@ -46,7 +48,7 @@ def test_vcinvoice(node_factory: NodeFactory):
 def test_concrete_send(node_factory: NodeFactory):
     """ Ensure concrete send still works with plugin activated
     """
-    l1, l2, l3 = node_factory.get_nodes(3, pluginopts)
+    l1, l2, l3 = node_factory.get_nodes(3, pluginopts) # type: LightningNode, LightningNode, LightningNode
 
     l1.connect(l3)
     l1.openchannel(l3, 1_000_000)
@@ -57,7 +59,7 @@ def test_concrete_send(node_factory: NodeFactory):
     #l1.pay(l3, 100000)
 
 def test_virtual_send(node_factory: NodeFactory):
-    l1, l2, l3 = node_factory.get_nodes(3, pluginopts)
+    l1, l2, l3 = node_factory.get_nodes(3, pluginopts) # type: LightningNode, LightningNode, LightningNode
 
     l1.connect(l3)
     l1.fund_channel(l3, 1_000_000)
@@ -68,7 +70,7 @@ def test_virtual_send(node_factory: NodeFactory):
 def test_concrete_receive(node_factory: NodeFactory):
     """ Ensure concrete receive still works with plugin activated
     """
-    l1, l2, l3 = node_factory.get_nodes(3, pluginopts)
+    l1, l2, l3 = node_factory.get_nodes(3, pluginopts) # type: LightningNode, LightningNode, LightningNode
 
     l3.connect(l1)
     l3.fund_channel(l1, 1_000_000)
@@ -80,7 +82,7 @@ def test_concrete_receive(node_factory: NodeFactory):
     #l3.rpc.pay(invoice["bolt11"])
 
 def test_virtual_receive(node_factory: NodeFactory):
-    l1, l2, l3 = node_factory.get_nodes(3, pluginopts)
+    l1, l2, l3 = node_factory.get_nodes(3, pluginopts) # type: LightningNode, LightningNode, LightningNode
     l2.connect(l1)
     open_virtual_channel(l2, l1)
 

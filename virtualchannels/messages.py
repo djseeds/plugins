@@ -2,14 +2,8 @@ import struct
 from enum import Enum
 from string import hexdigits
 from io import BytesIO
-
-class MessageType(Enum):
-  PROPOSE_VIRTUAL_RECEIVE= 0xFFA9
-  ACCEPT_VIRTUAL_RECEIVE= 0xFFAB
-  FAIL_VIRTUAL_RECEIVE= 0xFFAD
-  PROPOSE_VIRTUAL_SEND= 0xFFAF
-  VIRTUAL_SEND_COMPLETE= 0xFFB1
-  FAIL_VIRTUAL_SEND= 0xFFB3
+from pyln.proto.onion import TlvPayload, TlvField
+from pyln.proto.primitives import varint_decode
 
 class Message():
   typeNum: int = None
@@ -19,7 +13,7 @@ class Message():
     """ Deserializes a message """
     (t, msg) = split_message(b)
     # Create dict: message type -> Message class's from_bytes method
-    messages = { message.typeNum: message.from_bytes for message in cls.__subclasses__()}
+    messages = { message.typeNum: message.from_bytes for message in all_subclasses(cls) if message.typeNum is not None}
 
     return messages.get(t, lambda *args, **kwargs: None)(msg)
 
@@ -30,73 +24,58 @@ class Message():
 
   def to_bytes(self) -> bytes:
     """ Serializes this message """
-    pass
+    raise NotImplementedError("Message is an abstract class.")
 
   def to_hex(self) -> str:
     """ Serializes this message """
     return self.to_bytes().hex()
-    pass
+
+class TlvMessage(Message):
+    @classmethod
+    def from_bytes(cls, b):
+      return cls.from_tlv_payload(TlvPayload.from_bytes(b, skip_length=True))
+
+    def to_bytes(self) -> bytes:
+      # Since c-lightning adds the length, we need to remove it here.
+      with_len = self.to_tlv_payload().to_bytes()
+      b = BytesIO(with_len)
+      varint_decode(b)
+      return self.typeNum.to_bytes(2, 'big') + b.read()
+
+    @classmethod
+    def from_tlv_payload(cls, payload: TlvPayload):
+      raise NotImplementedError("TlvMessage is an abstract class.")
+
+    def to_tlv_payload(self):
+      raise NotImplementedError("TlvMessage is an abstract class.")
 
 
-  def is_valid(self):
-    """ Whether this message is valid, and can be serialized successfully """
-    pass
-
-
-class InitVirtualReceive(Message):
+class InitVirtualReceive(TlvMessage):
   typeNum: int = 0xFFA9
-
-  # Message-specific data
-  preimage: str
-
-  def __init__(self, preimage: str = None):
+  PREIMAGE_TYPE_NUM: int = 623058254
+  BOLT11_TYPE_NUM: int = 3682297234
+  
+  def __init__(self, preimage: str, bolt11: str):
     self.preimage = preimage
-
-  def to_bytes(self) -> bytes:
-    """ Serializes this message """
-    b = BytesIO()
-    b.write(self.typeNum.to_bytes(2, 'big'))
-    b.write(bytes.fromhex(self.preimage))
-    return b.getvalue()
+    self.bolt11  = bolt11
 
   @classmethod
-  def from_bytes(cls, message: bytes) -> 'InitVirtualReceive':
-    """ Parses a message """
-    if len(message) != 32:
-      raise ValueError("Preimage must be exactly 32 bytes")
-    return cls(preimage=message.hex())
+  def from_tlv_payload(cls, payload: TlvPayload):
+    preimage = payload.get(cls.PREIMAGE_TYPE_NUM).value.hex()
+    bolt11 = payload.get(cls.BOLT11_TYPE_NUM).value.decode('ASCII')
+    return cls(preimage, bolt11)
+
+  def to_tlv_payload(self) -> TlvPayload:
+    return TlvPayload([
+      TlvField(self.PREIMAGE_TYPE_NUM, bytes.fromhex(self.preimage)),
+      TlvField(self.BOLT11_TYPE_NUM, self.bolt11.encode('ASCII'))
+    ])
 
 
 def split_message(message: bytes):
   t = int.from_bytes(message[0:2], byteorder='big')
   return (t, message[2:])
 
-def varint_encode(i, w):
-    """Encode an integer `i` into the writer `w`
-    """
-    if i < 0xFD:
-        w.write(struct.pack("!B", i))
-    elif i <= 0xFFFF:
-        w.write(struct.pack("!BH", 0xFD, i))
-    elif i <= 0xFFFFFFFF:
-        w.write(struct.pack("!BL", 0xFE, i))
-    else:
-        w.write(struct.pack("!BQ", 0xFF, i))
-
-
-def varint_decode(r):
-    """Decode an integer from reader `r`
-    """
-    raw = r.read(1)
-    if len(raw) != 1:
-        return None
-
-    i, = struct.unpack("!B", raw)
-    if i < 0xFD:
-        return i
-    elif i == 0xFD:
-        return struct.unpack("!H", r.read(2))[0]
-    elif i == 0xFE:
-        return struct.unpack("!L", r.read(4))[0]
-    else:
-        return struct.unpack("!Q", r.read(8))[0]
+def all_subclasses(cls):
+    return set(cls.__subclasses__()).union(
+        [s for c in cls.__subclasses__() for s in all_subclasses(c)])

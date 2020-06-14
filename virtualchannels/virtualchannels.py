@@ -77,9 +77,8 @@ def on_vcinvoice(plugin: Plugin, preimage=None, **kwargs):
 
   invoice = plugin.rpc.call('invoice', kwargs)
 
-  msg = messages.InitVirtualReceive(kwargs['preimage'])
+  msg = messages.InitVirtualReceive(kwargs['preimage'], invoice['bolt11'])
   # Notify trusted nodes of new invoice
-  plugin.log("custommsg " + msg.to_hex())
   for node in trusted_nodes:
     plugin.rpc.call("dev-sendcustommsg", {
       "node_id": node,
@@ -93,8 +92,6 @@ def on_custommsg(plugin: Plugin, peer_id, message, **kwargs):
   # TODO: Understand what the first 4 bytes mean. Doesn't seem to be length?
   # e.g. here: https://github.com/ElementsProject/lightning/blob/ce9e559aed5c491f09b570545aabedb2a2c64402/tests/test_misc.py#L2237
   msg = messages.Message.from_hex(message[8:])
-
-  plugin.log("custommsg " + message)
 
   handler = message_handlers.get(msg.__class__, lambda *args, **kwargs: {"result": "continue"})
   return handler(plugin, peer_id, msg)
