@@ -4,6 +4,7 @@ from string import hexdigits
 from io import BytesIO
 from pyln.proto.onion import TlvPayload, TlvField
 from pyln.proto.primitives import varint_decode
+from pyln.proto.invoice import Invoice
 
 class Message():
   typeNum: int = None
@@ -70,6 +71,10 @@ class InitVirtualReceive(TlvMessage):
       TlvField(self.PREIMAGE_TYPE_NUM, bytes.fromhex(self.preimage)),
       TlvField(self.BOLT11_TYPE_NUM, self.bolt11.encode('ASCII'))
     ])
+
+  @property
+  def invoice(self) -> Invoice:
+    return Invoice.decode(self.bolt11)
 
 
 def split_message(message: bytes):

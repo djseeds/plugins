@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 from random import SystemRandom
 from string import hexdigits
-from pyln.client import Plugin
+from pyln.client import Plugin, Millisatoshi
 import messages
 from hashlib import sha256
+from pyln.proto.invoice import Invoice
+from datetime import datetime, timedelta
+from typing import Dict
 
 trusted_nodes = []
-preimages = dict()
-
+preimages : Dict[str,messages.InitVirtualReceive] = dict() 
 plugin = Plugin()
 
 @plugin.init()
@@ -20,16 +22,28 @@ def init(options, configuration, plugin: Plugin):
 def on_htlc_accepted(plugin: Plugin, htlc, **kwargs):
   """ Main method for receiving on behalf of trusted node.
   """
+  try:
 
-  # TODO: Need to receive an ack from source before sending response to support type 2 channels (finite capacity)
-  if htlc["payment_hash"] in preimages:
-    plugin.log("We have this preimage!: " + preimages[htlc["payment_hash"]])
-    return {
-      "result": "resolve",
-      "payment_key": preimages[htlc['payment_hash']]
-    }
-  else:
-    plugin.log("We don't have preimage for hash: " + htlc["payment_hash"] + " preimages: " + str(preimages))
+    if htlc["payment_hash"] in preimages:
+      amount = Millisatoshi(htlc["amount"])
+      msg = preimages[htlc["payment_hash"]]
+      if datetime.now() > get_expiry(msg.invoice) or amount < Millisatoshi(str(msg.invoice.amount)+"btc"):
+        height = plugin.rpc.getinfo()["blockheight"]
+        return {
+          "result": "fail",
+          "failure_message": ((0x4000 | 15).to_bytes(2,'big') + htlc["amount"].to_bytes(8, 'big') + height.to_bytes(4, 'big')).hex()
+        }
+
+      # TODO: Need to receive an ack (containing preimage) from source before sending response to support type 2 channels (finite capacity)
+      return {
+        "result": "resolve",
+        "payment_key": preimages[htlc['payment_hash']].preimage
+      }
+    else:
+      # We don't have a preimage for this payment_hash
+      return {"result": "continue"}
+  except Exception as ex:
+    plugin.log("Exception on htlc: " + str(ex) + " htlc: " + str(htlc))
     return {"result": "continue"}
 
 
@@ -129,12 +143,16 @@ def on_init_virtual_receive(plugin: Plugin, peer_id, message: messages.InitVirtu
   """ Contents: preimage bolt11
   """
   h = sha256(bytes.fromhex(message.preimage)).hexdigest()
-  preimages[h] = message.preimage
+  preimages[h] = message
   return {"result": "continue"}
 
 
 message_handlers = {
   messages.InitVirtualReceive: on_init_virtual_receive,
 }
+
+def get_expiry(invoice: Invoice):
+  start = datetime.fromtimestamp(invoice.date)
+  return start + timedelta(seconds=invoice._get_tagged('x')[0])
 
 plugin.run()
