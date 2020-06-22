@@ -1,14 +1,23 @@
 #!/usr/bin/env python3
+import messages
+from payments import Payment, pending_payments
+
+from pyln.client import Plugin, Millisatoshi, RpcError
+from pyln.client.plugin import Request, LightningRpc
+from pyln.proto.invoice import Invoice
+
+from typing import Dict, List
+from hashlib import sha256
+from datetime import datetime, timedelta
 from random import SystemRandom
 from string import hexdigits
-from pyln.client import Plugin, Millisatoshi
-import messages
-from hashlib import sha256
-from pyln.proto.invoice import Invoice
-from datetime import datetime, timedelta
-from typing import Dict
 
+# List of nodes who we trust to use our virtual channels.
+# In effect, a list of infinite-balance unidirectional payment channels to us.
 trusted_nodes = []
+# List of nodes who trust us to use their virtual channels.
+# In effect, a list of infinite-balance unidirectional payment channels from us.
+outgoing_channels = []
 preimages : Dict[str,messages.InitVirtualReceive] = dict() 
 plugin = Plugin()
 
@@ -19,11 +28,12 @@ def init(options, configuration, plugin: Plugin):
   trusted_nodes = opt.split(",") if opt != "null" else []
 
 @plugin.hook("htlc_accepted")
-def on_htlc_accepted(plugin: Plugin, htlc, **kwargs):
+def on_htlc_accepted(plugin: Plugin, htlc, onion, **kwargs):
   """ Main method for receiving on behalf of trusted node.
   """
   try:
-
+    # TODO: First check if we have a channel with the given short_channel_id
+    short_channel_id = onion["short_channel_id"]
     if htlc["payment_hash"] in preimages:
       amount = Millisatoshi(htlc["amount"])
       msg = preimages[htlc["payment_hash"]]
@@ -31,6 +41,7 @@ def on_htlc_accepted(plugin: Plugin, htlc, **kwargs):
         height = plugin.rpc.getinfo()["blockheight"]
         return {
           "result": "fail",
+          # incorrect_or_unknown_payment_details from spec: https://github.com/lightningnetwork/lightning-rfc/blob/master/04-onion-routing.md#failure-messages
           "failure_message": ((0x4000 | 15).to_bytes(2,'big') + htlc["amount"].to_bytes(8, 'big') + height.to_bytes(4, 'big')).hex()
         }
 
@@ -47,23 +58,16 @@ def on_htlc_accepted(plugin: Plugin, htlc, **kwargs):
     return {"result": "continue"}
 
 
-#@plugin.hook("rpc_command")
-#def on_rpc_command(plugin: Plugin, rpc_command, **kwargs):
-#  """ Routes RPC commands to handlers or allows clightning to continue.
-#  """
-#  method = rpc_command["method"]
-#  plugin.log("Got an incoming RPC command method={}".format(method))
-#  handlers = {
-#    'pay': on_pay,
-#    'invoice': on_invoice,
-#  }
-#
-#  handler = handlers.get(method, lambda a, **kwargs: {"result": "continue"})
-#  return handler(plugin, **(rpc_command["params"]))
+@plugin.async_method("vcpay")
+def on_pay(plugin: Plugin, request: Request, **kwargs):
+  # Replace Millisatoshi-formatted arguments
+  kwargs["msatoshi"] = int(Millisatoshi(kwargs["msatoshi"])) if kwargs.get("msatoshi", None) is not None else None
+  kwargs["exemptfee"] = int(Millisatoshi(kwargs["exemptfee"])) if kwargs.get("exemptfee", None) is not None else None
 
-def on_pay(plugin: Plugin, **kwargs):
-  # Send invoice to trusted nodes, aggregate the result.
-  return {"result": "continue"}
+  # Start a payment, which will be responsible for responding to the client.
+  payment = Payment(request, plugin.rpc, outgoing_channels, plugin, **kwargs)
+  pending_payments[payment.bolt11] = payment
+  payment.start()
 
 
 @plugin.method("vcinvoice")
@@ -108,7 +112,9 @@ def on_custommsg(plugin: Plugin, peer_id, message, **kwargs):
   msg = messages.Message.from_hex(message[8:])
 
   handler = message_handlers.get(msg.__class__, lambda *args, **kwargs: {"result": "continue"})
-  return handler(plugin, peer_id, msg)
+  handler(plugin, peer_id, msg)
+  # This response is currently ignored by clightning
+  return {"result": "continue"}
 
 @plugin.method("openvirtualchannel")
 def on_openvirtualchannel(plugin: Plugin, id):
@@ -129,6 +135,10 @@ def on_openvirtualchannel(plugin: Plugin, id):
       }
     }
   # Create a virtual channel with a new short channel ID
+  plugin.rpc.call("dev-sendcustommsg", {
+    "node_id": id,
+    "msg": messages.InitVirtualChannel().to_hex()
+  })
   trusted_nodes.append(id)
 
   # TODO: Decide how to generate short channel IDs for these channels
@@ -144,11 +154,54 @@ def on_init_virtual_receive(plugin: Plugin, peer_id, message: messages.InitVirtu
   """
   h = sha256(bytes.fromhex(message.preimage)).hexdigest()
   preimages[h] = message
-  return {"result": "continue"}
 
+def on_init_virtual_channel(plugin: Plugin, peer_id, message: messages.InitVirtualChannel):
+  """ Contents: empty
+  """
+  # Peer wants to create an infinite-balance unidirectional virtual channel from us to them, which will allow:
+  # - Us to receive on their behalf
+  # - Them to send on our behalf
+  # We accept because we can only gain from this channel's existence.
+  outgoing_channels.append(peer_id)
+
+def on_init_virtual_send(plugin: Plugin, peer_id, message: messages.InitVirtualSend):
+  if peer_id not in trusted_nodes:
+    # Respond with send failed
+    plugin.rpc.call("dev-sendcustommsg", {
+      "node_id": peer_id,
+      "msg": messages.VirtualSendFailure(message.bolt11).to_hex()
+    })
+  else:
+    try:
+      res = plugin.rpc.pay(message.bolt11, message.msatoshi, message.label, message.riskfactor, None, message.maxfeepercent, message.retry_for, message.maxdelay, message.exemptfee)
+      # Respond with send succeeded
+      plugin.rpc.call("dev-sendcustommsg", {
+        "node_id": peer_id,
+        "msg": messages.VirtualSendSuccess(res["payment_preimage"], message.bolt11).to_hex()
+      })
+    except RpcError as error:
+      # Respond with send failed
+      plugin.rpc.call("dev-sendcustommsg", {
+        "node_id": peer_id,
+        "msg": messages.VirtualSendFailure(message.bolt11).to_hex()
+      })
+
+def on_virtual_send_failure(plugin: Plugin, peer_id, message: messages.VirtualSendFailure):
+  payment = pending_payments.get(message.bolt11, None)
+  if payment is not None:
+    payment.on_virtual_send_failure()
+
+def on_virtual_send_success(plugin: Plugin, peer_id, message: messages.VirtualSendSuccess):
+  payment = pending_payments.get(message.bolt11, None)
+  if payment is not None:
+    payment.on_virtual_send_success()
 
 message_handlers = {
   messages.InitVirtualReceive: on_init_virtual_receive,
+  messages.InitVirtualChannel: on_init_virtual_channel,
+  messages.InitVirtualSend: on_init_virtual_send,
+  messages.VirtualSendFailure: on_virtual_send_failure,
+  messages.VirtualSendSuccess: on_virtual_send_success
 }
 
 def get_expiry(invoice: Invoice):

@@ -63,9 +63,21 @@ def test_virtual_send(node_factory: NodeFactory):
 
     l1.connect(l3)
     l1.fund_channel(l3, 1_000_000)
+
+    l2.connect(l1)
+    # l1 trusts l2
+    open_virtual_channel(l1, l2)
+
+    sleep(1)
+
+    amt = 9000000
+
     # l2 should be able to send to l3 through l1
-    invoice = l3.rpc.invoice(100000, "test", "Test Invoice")
-    l2.rpc.pay(invoice["bolt11"])
+    invoice = l3.rpc.invoice(amt, "test", "Test Invoice")
+    l2.rpc.call('vcpay', {"bolt11": invoice["bolt11"]})
+
+    # Payment has already succeeded from l2's point of view. Ensure l3 actually got the money.
+    wait_for(lambda : int(l3.rpc.listfunds()['channels'][0]['our_amount_msat']) == amt)
 
 def test_concrete_receive(node_factory: NodeFactory):
     """ Ensure concrete receive still works with plugin activated
@@ -79,7 +91,6 @@ def test_concrete_receive(node_factory: NodeFactory):
 
     sleep(10)
     l3.pay(l1, 100000)
-    #l3.rpc.pay(invoice["bolt11"])
 
 def test_virtual_receive(node_factory: NodeFactory):
     l1, l2, l3 = node_factory.get_nodes(3, pluginopts) # type: LightningNode, LightningNode, LightningNode
